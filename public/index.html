@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070b14">
+  <meta name="description" content="A rail-shooter arcade game controlled by your phone's motion sensors.">
+  <title>STARLANE — Motion Arcade</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/game.js" defer></script>
+</head>
+<body class="game-page">
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Starlane arcade home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 36 36" fill="none"><circle cx="18" cy="18" r="13.5" stroke="currentColor" stroke-width="1.3" opacity=".55"/><path d="M18 4.5 20.8 15l10.7 3-10.7 2.8L18 31.5 15.2 20.8 4.5 18l10.7-3L18 4.5Z" fill="currentColor"/><circle cx="18" cy="18" r="2.5" fill="#07101a"/></svg>
+      </span>
+      <span class="brand-name">ORBITAL<span> / </span>ARCADE</span>
+    </a>
+    <div class="topbar-center"><span class="live-dot"></span> MOTION LINK <span class="topbar-divider">/</span> FLIGHT DECK 01</div>
+    <div id="link-status" class="status-pill"><span class="status-pip"></span><span id="link-status-text">CONNECTING</span></div>
+  </header>
+
+  <main class="game-shell">
+    <section class="game-column" aria-label="Space shooter game">
+      <div class="game-heading">
+        <div>
+          <p class="eyebrow"><span class="eyebrow-index">01</span> ON-RAILS SPACE SHOOTER</p>
+          <h1>STAR<span>LANE</span></h1>
+        </div>
+        <div class="hud-stats" aria-label="Game statistics">
+          <div class="hud-stat"><span class="hud-label">SCORE</span><strong id="score-value">000000</strong></div>
+          <div class="hud-stat"><span class="hud-label">SECTOR</span><strong id="wave-value">01</strong></div>
+          <div class="hud-stat hull-stat"><span class="hud-label">HULL</span><strong id="hull-value" class="hull-dots">● ● ●</strong></div>
+        </div>
+      </div>
+
+      <div class="stage-frame">
+        <div class="stage-topline">
+          <span><i class="tiny-square"></i> FLIGHT WINDOW <span class="stage-coord">// 28.4° N</span></span>
+          <span id="stage-state">SYSTEMS IDLE</span>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="game-canvas" aria-label="Starlane rail shooter playfield"></canvas>
+          <div id="game-overlay" class="game-overlay">
+            <div class="overlay-kicker"><span class="overlay-line"></span><span id="overlay-kicker-text">PILOT LINK STANDING BY</span></div>
+            <h2 id="overlay-title">THE LANE<br><em>IS YOURS.</em></h2>
+            <p id="overlay-copy">Roll to steer and pitch to change rail speed.<br>Your interceptor autofires throughout flight.</p>
+            <button id="start-run" class="primary-button" type="button"><span>START FLIGHT</span><span class="button-arrow">↗</span></button>
+            <div class="keyboard-hint"><span class="keycap">A</span><span class="keycap">D</span><span class="hint-separator">or</span><span class="keycap wide-key">←</span><span class="keycap wide-key">→</span><span class="hint-copy">&nbsp;keyboard backup</span></div>
+          </div>
+          <div class="canvas-corner corner-tl"></div><div class="canvas-corner corner-tr"></div>
+          <div class="canvas-corner corner-bl"></div><div class="canvas-corner corner-br"></div>
+          <div class="playfield-badge"><span class="badge-light"></span><span id="playfield-status">READY</span></div>
+        </div>
+        <div class="stage-footer">
+          <span><span class="footer-signal">◉</span> RAIL SPEED <b id="rail-speed-value">1.0×</b></span>
+          <span class="stage-footer-center">AUTO-FIRE ACTIVE <span>—</span> PITCH SETS SPEED</span>
+          <span>BUILD <b>0.1.0</b></span>
+        </div>
+      </div>
+      <div class="game-footnote"><span class="footnote-star">✳</span> Your interceptor stays on the flight rail. Roll to steer; pitch forward to accelerate and back to slow down. Blasters autofire.</div>
+    </section>
+
+    <aside class="flight-panel" aria-label="Phone pairing and controls">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">REMOTE PILOTING</p>
+          <h2>FLIGHT LINK</h2>
+        </div>
+        <span class="panel-icon" aria-hidden="true">⌁</span>
+      </div>
+
+      <div id="pilot-card" class="pilot-card">
+        <div class="pilot-card-top"><span class="pilot-avatar"><svg viewBox="0 0 24 24" fill="none"><path d="m12 3 2.2 7.1L21 12l-6.8 1.9L12 21l-2.2-7.1L3 12l6.8-1.9L12 3Z" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg></span><span id="pilot-connection" class="pilot-connection">WAITING FOR PILOT</span><span id="pilot-live-indicator" class="pilot-live-indicator"></span></div>
+        <p id="pilot-copy">Pair a phone to take the controls.</p>
+      </div>
+
+      <div class="room-block">
+        <div class="room-label-row"><span class="section-label">YOUR ROOM CODE</span><span class="room-private"><span class="lock-icon">⌑</span> PRIVATE SESSION</span></div>
+        <div class="room-code" id="room-code" aria-label="Room code">······</div>
+        <div class="room-hint">Enter this on your phone to pair.</div>
+      </div>
+
+      <div class="pair-instructions">
+        <div class="instruction-row"><span class="instruction-number">01</span><div><strong>Open the STARLANE Android app</strong><span>Enter the game server address below.</span></div></div>
+        <div class="instruction-row"><span class="instruction-number">02</span><div><strong>Enter this room code</strong><span>Connect to this flight deck.</span></div></div>
+      </div>
+      <div class="server-address-block"><span class="section-label">GAME SERVER ADDRESS</span><code id="server-address">—</code><span id="server-address-note">Use this exact address in the Android app.</span></div>
+
+      <button id="copy-link" class="secondary-button" type="button"><span class="copy-icon">▢</span><span id="copy-label">COPY ANDROID SERVER URL</span><span class="copy-arrow">↗</span></button>
+      <div id="copy-note" class="copy-note" aria-live="polite"></div>
+
+      <div class="panel-divider"></div>
+      <div class="controls-guide-head"><span class="section-label">FLIGHT CONTROLS</span><span class="mini-label">PHONE</span></div>
+      <div class="control-guide">
+        <div class="guide-glyph tilt-glyph"><span>↔</span></div>
+        <div><strong>ROLL TO STEER</strong><span>Roll left or right to move across the lane.</span></div>
+      </div>
+      <div class="control-guide">
+        <div class="guide-glyph"><span>↕</span></div>
+        <div><strong>PITCH TO SET SPEED</strong><span>Tip forward to accelerate; back to slow down.</span></div>
+      </div>
+      <div class="control-guide">
+        <div class="guide-glyph fire-glyph"><span>✦</span></div>
+        <div><strong>AUTO-FIRE</strong><span>Blasters fire continuously while in flight.</span></div>
+      </div>
+      <div class="panel-tip"><span class="tip-star">✳</span><span>Keep your phone upright. Tap <b>CALIBRATE</b> to set neutral.</span></div>
+    </aside>
+  </main>
+
+  <footer class="site-footer"><span>ORBITAL ARCADE <span class="footer-muted">// MOTION CONTROL EXPERIMENT</span></span><span>LOW LATENCY · WEBSOCKET LINK</span></footer>
+</body>
+</html>

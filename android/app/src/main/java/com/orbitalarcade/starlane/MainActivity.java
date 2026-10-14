@@ -1,0 +1,836 @@
+package com.orbitalarcade.starlane;
+
+import android.app.Activity;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.DashPathEffect;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.view.Gravity;
+import android.view.View;
+import android.view.Window;
+import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.EditorInfo;
+import android.text.InputFilter;
+import android.text.InputType;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
+
+public class MainActivity extends Activity implements SensorEventListener {
+    private static final int BG = Color.rgb(7, 11, 20);
+    private static final int PANEL = Color.rgb(13, 20, 32);
+    private static final int PANEL_INNER = Color.rgb(8, 14, 24);
+    private static final int WHITE = Color.rgb(242, 246, 251);
+    private static final int MUTED = Color.rgb(134, 149, 169);
+    private static final int CYAN = Color.rgb(101, 232, 236);
+    private static final int MINT = Color.rgb(182, 255, 206);
+    private static final int ORANGE = Color.rgb(255, 185, 104);
+    private static final int RED = Color.rgb(255, 105, 119);
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final OkHttpClient httpClient = new OkHttpClient.Builder()
+            .pingInterval(20, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build();
+
+    private EditText serverField;
+    private EditText roomField;
+    private TextView connectionBadge;
+    private TextView connectionMessage;
+    private TextView sensorState;
+    private TextView motionMessage;
+    private TextView angleValue;
+    private TextView roomFooter;
+    private TextView latencyFooter;
+    private Button connectButton;
+    private Button motionButton;
+    private Button calibrateButton;
+    private TiltDialView dialView;
+    private SpeedMeterView speedMeter;
+    private TextView railSpeedValue;
+
+    private SensorManager sensorManager;
+    private Sensor rotationSensor;
+    private Sensor gyroscope;
+    private float gyroRollRateDegrees = 0f;
+    private final float[] rotationMatrix = new float[9];
+    private final float[] orientationAngles = new float[3];
+    private int rotationSensorType = -1;
+    private boolean motionEnabled = false;
+    private boolean sensorSeen = false;
+    private float lastRoll = Float.NaN;
+    private float neutralRoll = Float.NaN;
+    private float lastPitch = Float.NaN;
+    private float neutralPitch = Float.NaN;
+    private float motionSteer = 0f;
+    private float effectiveSteer = 0f;
+    private float motionThrottle = 0f;
+    private float effectiveThrottle = 0f;
+
+    private String roomCode = "";
+    private WebSocket socket;
+    private boolean isPaired = false;
+    private boolean wantsConnection = false;
+    private long connectionGeneration = 0;
+    private long lastProbeAt = 0;
+    private String lastError = "";
+
+    private final Runnable inputTicker = new Runnable() {
+        @Override public void run() {
+            WebSocket activeSocket = socket;
+            if (activeSocket != null && isPaired) {
+                try {
+                    JSONObject input = new JSONObject();
+                    input.put("type", "input");
+                    input.put("x", Math.max(-1f, Math.min(1f, effectiveSteer)));
+                    input.put("throttle", Math.max(-1f, Math.min(1f, effectiveThrottle)));
+                    activeSocket.send(input.toString());
+
+                    long now = SystemClock.elapsedRealtime();
+                    if (now - lastProbeAt >= 1800) {
+                        JSONObject probe = new JSONObject();
+                        probe.put("type", "latency");
+                        probe.put("t", now);
+                        activeSocket.send(probe.toString());
+                        lastProbeAt = now;
+                    }
+                } catch (JSONException ignored) {
+                    // The fixed input payload cannot fail under normal operation.
+                }
+            }
+            handler.postDelayed(this, 33);
+        }
+    };
+
+    @Override protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        Window window = getWindow();
+        window.setStatusBarColor(BG);
+        window.setNavigationBarColor(BG);
+        if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(true);
+
+        sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        SharedPreferences preferences = getSharedPreferences("starlane-controller", MODE_PRIVATE);
+        String savedServer = preferences.getString("server", "");
+        buildInterface();
+        if (!savedServer.isEmpty()) serverField.setText(savedServer);
+        roomField.setText(preferences.getString("room", ""));
+        handler.post(inputTicker);
+    }
+
+    private void buildInterface() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(BG);
+        scroll.setClipToPadding(false);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(20), dp(8), dp(20), dp(24));
+        scroll.addView(content, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
+        setContentView(scroll);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        TextView brand = makeText("✦  ORBITAL / ARCADE", 11, CYAN, true);
+        brand.setLetterSpacing(.10f);
+        header.addView(brand, new LinearLayout.LayoutParams(0, dp(52), 1));
+        connectionBadge = makeText("NOT PAIRED", 9, ORANGE, true);
+        connectionBadge.setGravity(Gravity.CENTER);
+        connectionBadge.setPadding(dp(10), dp(8), dp(10), dp(8));
+        connectionBadge.setBackground(roundBackground(0x14FFB968, 0x44FFB968, 6));
+        header.addView(connectionBadge, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, dp(30)));
+        content.addView(header);
+        addDivider(content, 0x223F5268, 1, 0, 0, 16);
+
+        TextView eyebrow = makeText("REMOTE PILOTING   //   FLIGHT DECK 01", 9, MUTED, true);
+        eyebrow.setLetterSpacing(.14f);
+        content.addView(eyebrow, marginParams(-1, -2, 0, 17, 0));
+        TextView title = makeText("YOUR PHONE.", 32, WHITE, true);
+        title.setLetterSpacing(.025f);
+        content.addView(title);
+        TextView titleAccent = makeText("THE FLIGHT STICK.", 31, CYAN, true);
+        titleAccent.setLetterSpacing(.02f);
+        content.addView(titleAccent);
+        TextView subtitle = makeText("Roll to steer. Pitch to control rail speed.", 12, MUTED, false);
+        subtitle.setLineSpacing(dp(3), 1f);
+        content.addView(subtitle, marginParams(-1, -2, 0, 18, 0));
+
+        LinearLayout pairCard = card(content, "PAIR WITH YOUR GAME", "SIX-CHARACTER ROOM CODE");
+        TextView serverLabel = label("GAME SERVER ADDRESS");
+        pairCard.addView(serverLabel, marginParams(-1, -2, 0, 7, 0));
+        serverField = makeField("https://your-game-host  or  http://192.168.1.x:3000", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        serverField.setImeOptions(EditorInfo.IME_ACTION_NEXT);
+        pairCard.addView(serverField, marginParams(-1, 46, 0, 13, 0));
+
+        TextView codeLabel = label("ROOM CODE");
+        pairCard.addView(codeLabel, marginParams(-1, -2, 0, 7, 0));
+        roomField = makeField("ENTER CODE", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        roomField.setFilters(new InputFilter[]{new InputFilter.AllCaps(), new InputFilter.LengthFilter(6)});
+        roomField.setLetterSpacing(.20f);
+        roomField.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        pairCard.addView(roomField, marginParams(-1, 46, 0, 11, 0));
+
+        connectButton = makeButton("CONNECT TO GAME", CYAN, BG);
+        pairCard.addView(connectButton, marginParams(-1, 44, 0, 0, 0));
+        connectButton.setOnClickListener(view -> {
+            hideKeyboard();
+            if (wantsConnection) disconnectFromGame();
+            else connectToGame();
+        });
+        connectionMessage = makeText("On the laptop, copy its server address and enter the six-character room code.", 9, MUTED, false);
+        connectionMessage.setLineSpacing(dp(2), 1f);
+        pairCard.addView(connectionMessage, marginParams(-1, -2, 1, 10, 0));
+
+        LinearLayout motionCard = card(content, "MOTION SENSOR", "ANDROID DEVICE SENSOR");
+        LinearLayout sensorRow = new LinearLayout(this);
+        sensorRow.setGravity(Gravity.CENTER_VERTICAL);
+        sensorState = makeText("NOT ENABLED", 8, ORANGE, true);
+        sensorState.setLetterSpacing(.10f);
+        sensorRow.addView(sensorState, new LinearLayout.LayoutParams(0, dp(24), 1));
+        angleValue = makeText("0°", 13, CYAN, true);
+        angleValue.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        sensorRow.addView(angleValue);
+        motionCard.addView(sensorRow);
+
+        dialView = new TiltDialView(this);
+        LinearLayout.LayoutParams dialParams = new LinearLayout.LayoutParams(dp(176), dp(176));
+        dialParams.gravity = Gravity.CENTER_HORIZONTAL;
+        dialParams.topMargin = dp(4);
+        dialParams.bottomMargin = dp(6);
+        motionCard.addView(dialView, dialParams);
+
+        LinearLayout speedHeader = new LinearLayout(this);
+        speedHeader.setGravity(Gravity.CENTER_VERTICAL);
+        TextView speedLabel = label("RAIL SPEED");
+        speedHeader.addView(speedLabel, new LinearLayout.LayoutParams(0, dp(20), 1));
+        railSpeedValue = makeText("1.0×", 12, CYAN, true);
+        railSpeedValue.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        speedHeader.addView(railSpeedValue);
+        motionCard.addView(speedHeader, marginParams(-1, -2, 0, 2, 0));
+
+        speedMeter = new SpeedMeterView(this);
+        motionCard.addView(speedMeter, marginParams(-1, dp(15), 0, 4, 0));
+        LinearLayout speedLabels = new LinearLayout(this);
+        TextView slowLabel = makeText("SLOWER", 7, 0xFF728398, true);
+        TextView fastLabel = makeText("FASTER", 7, 0xFF728398, true);
+        speedLabels.addView(slowLabel, new LinearLayout.LayoutParams(0, dp(13), 1));
+        fastLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        speedLabels.addView(fastLabel, new LinearLayout.LayoutParams(0, dp(13), 1));
+        motionCard.addView(speedLabels);
+
+        motionMessage = makeText("Roll to steer; pitch forward/back to adjust rail speed.", 9, MUTED, false);
+        motionMessage.setGravity(Gravity.CENTER);
+        motionCard.addView(motionMessage, marginParams(-1, -2, 0, 13, 0));
+
+        LinearLayout motionActions = new LinearLayout(this);
+        motionActions.setOrientation(LinearLayout.HORIZONTAL);
+        motionButton = makeButton("ENABLE MOTION", CYAN, BG);
+        calibrateButton = makeButton("◎  CALIBRATE", 0xFF172332, 0xFFB9C7D5);
+        calibrateButton.setEnabled(false);
+        calibrateButton.setBackground(roundBackground(0xFF172332, 0xFF35475A, 6));
+        LinearLayout.LayoutParams actionLeft = new LinearLayout.LayoutParams(0, dp(42), 1.25f);
+        LinearLayout.LayoutParams actionRight = new LinearLayout.LayoutParams(0, dp(42), 1f);
+        actionLeft.rightMargin = dp(8);
+        motionActions.addView(motionButton, actionLeft);
+        motionActions.addView(calibrateButton, actionRight);
+        motionCard.addView(motionActions);
+        motionButton.setOnClickListener(view -> enableMotion());
+        calibrateButton.setOnClickListener(view -> calibrateNeutral());
+
+
+        LinearLayout footer = new LinearLayout(this);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        footer.setPadding(dp(2), dp(17), dp(2), dp(3));
+        roomFooter = makeText("ROOM  — — — — — —", 7, MUTED, true);
+        roomFooter.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL);
+        roomFooter.setLetterSpacing(.05f);
+        footer.addView(roomFooter, new LinearLayout.LayoutParams(0, dp(18), 1));
+        latencyFooter = makeText("LINK —", 7, MUTED, true);
+        latencyFooter.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL);
+        footer.addView(latencyFooter);
+        content.addView(footer);
+        TextView gameScreen = makeText("STARLANE  //  ANDROID MOTION CONTROLLER", 7, 0xFF526276, true);
+        gameScreen.setLetterSpacing(.12f);
+        gameScreen.setGravity(Gravity.CENTER);
+        content.addView(gameScreen, marginParams(-1, dp(18), 0, 5, 0));
+    }
+
+    private LinearLayout card(LinearLayout parent, String title, String trailing) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(15), dp(14), dp(15), dp(14));
+        card.setBackground(roundBackground(PANEL, 0x2A8BA9C5, 12));
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        TextView left = label(title);
+        heading.addView(left, new LinearLayout.LayoutParams(0, dp(22), 1));
+        TextView right = makeText(trailing, 7, 0xFF64758B, true);
+        right.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        right.setLetterSpacing(.08f);
+        heading.addView(right);
+        card.addView(heading);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.bottomMargin = dp(12);
+        parent.addView(card, params);
+        return card;
+    }
+
+    private TextView label(String value) {
+        TextView view = makeText(value, 8, 0xFF8292A8, true);
+        view.setLetterSpacing(.12f);
+        return view;
+    }
+
+    private TextView makeText(String value, float size, int color, boolean bold) {
+        TextView view = new TextView(this);
+        view.setText(value);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        view.setIncludeFontPadding(false);
+        if (bold) view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return view;
+    }
+
+    private EditText makeField(String hint, int inputType) {
+        EditText field = new EditText(this);
+        field.setSingleLine(true);
+        field.setTextSize(12);
+        field.setTextColor(WHITE);
+        field.setHintTextColor(0xFF596A7F);
+        field.setHint(hint);
+        field.setInputType(inputType);
+        field.setPadding(dp(12), 0, dp(12), 0);
+        field.setBackground(roundBackground(PANEL_INNER, 0x337E9DB8, 7));
+        field.setSelectAllOnFocus(false);
+        return field;
+    }
+
+    private Button makeButton(String value, int background, int foreground) {
+        Button button = new Button(this);
+        button.setText(value);
+        button.setTextSize(9);
+        button.setTextColor(foreground);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setLetterSpacing(.08f);
+        button.setAllCaps(false);
+        button.setMinHeight(dp(42));
+        button.setPadding(dp(12), 0, dp(12), 0);
+        button.setBackground(roundBackground(background, background == CYAN ? 0xFF65E8EC : 0xFF35475A, 6));
+        if (background == CYAN) button.setBackground(roundBackground(CYAN, CYAN, 6));
+        return button;
+    }
+
+    private void addDivider(LinearLayout parent, int color, int height, int left, int top, int bottom) {
+        View divider = new View(this);
+        divider.setBackgroundColor(color);
+        parent.addView(divider, marginParams(-1, height, left, top, bottom));
+    }
+
+    private LinearLayout.LayoutParams marginParams(int width, int height, int left, int top, int bottom) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width < 0 ? width : dp(width), height < 0 ? height : dp(height));
+        params.leftMargin = dp(left);
+        params.topMargin = dp(top);
+        params.bottomMargin = dp(bottom);
+        return params;
+    }
+
+    private GradientDrawable roundBackground(int fill, int stroke, int radiusDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(dp(radiusDp));
+        if (stroke != 0) drawable.setStroke(dp(1), stroke);
+        return drawable;
+    }
+
+    private int dp(float value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void hideKeyboard() {
+        try {
+            InputMethodManager manager = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            manager.hideSoftInputFromWindow(roomField.getWindowToken(), 0);
+            roomField.clearFocus();
+            serverField.clearFocus();
+        } catch (Exception ignored) { }
+    }
+
+    private void connectToGame() {
+        String base = serverField.getText().toString().trim();
+        String code = roomField.getText().toString().toUpperCase(Locale.US).replaceAll("[^A-Z0-9]", "");
+        if (base.isEmpty()) {
+            setConnection("SERVER ADDRESS NEEDED", "Enter the URL shown on the laptop's game screen.", false);
+            serverField.requestFocus();
+            return;
+        }
+        if (code.length() != 6) {
+            setConnection("ROOM CODE NEEDED", "Enter the six-character code shown in Flight Link.", false);
+            roomField.requestFocus();
+            return;
+        }
+        roomCode = code;
+        roomField.setText(code);
+        getSharedPreferences("starlane-controller", MODE_PRIVATE).edit()
+                .putString("server", base).putString("room", code).apply();
+        wantsConnection = true;
+        isPaired = false;
+        lastError = "";
+        setConnection("CONNECTING", "Opening a real-time WebSocket link to the game server…", false);
+        connectButton.setText("CANCEL LINK");
+        openSocket();
+    }
+
+    private String websocketUrl(String base, String code) throws IllegalArgumentException {
+        String address = base.trim();
+        if (!address.contains("://")) address = "https://" + address;
+        Uri uri = Uri.parse(address);
+        String scheme = uri.getScheme();
+        String authority = uri.getEncodedAuthority();
+        String host = uri.getHost();
+        if (scheme == null || authority == null || host == null) {
+            throw new IllegalArgumentException("Enter a valid server URL, including the host.");
+        }
+        if (host.equalsIgnoreCase("localhost") || host.equals("127.0.0.1") || host.equals("::1")) {
+            throw new IllegalArgumentException("On a phone, localhost means the phone. Use the laptop's Wi-Fi IP (for example http://192.168.1.20:3000) or the hosted game URL.");
+        }
+        String wsScheme;
+        if (scheme.equalsIgnoreCase("https") || scheme.equalsIgnoreCase("wss")) wsScheme = "wss";
+        else if (scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("ws")) wsScheme = "ws";
+        else throw new IllegalArgumentException("Use an http:// or https:// server address.");
+        return wsScheme + "://" + authority + "/ws?role=controller&room=" + Uri.encode(code);
+    }
+
+    private void openSocket() {
+        if (!wantsConnection) return;
+        final long generation = ++connectionGeneration;
+        final String target;
+        try {
+            target = websocketUrl(serverField.getText().toString(), roomCode);
+        } catch (IllegalArgumentException error) {
+            wantsConnection = false;
+            setConnection("CHECK SERVER URL", error.getMessage(), false);
+            connectButton.setText("CONNECT TO GAME");
+            return;
+        }
+
+        Request request = new Request.Builder().url(target).build();
+        WebSocket newSocket = httpClient.newWebSocket(request, new WebSocketListener() {
+            @Override public void onOpen(WebSocket webSocket, Response response) {
+                runOnUiThread(() -> {
+                    if (generation != connectionGeneration) return;
+                    socket = webSocket;
+                    setConnection("PAIRING", "Server reached. Joining room " + roomCode + "…", false);
+                });
+            }
+
+            @Override public void onMessage(WebSocket webSocket, String text) {
+                try {
+                    JSONObject message = new JSONObject(text);
+                    String type = message.optString("type", "");
+                    if (type.equals("joined")) {
+                        boolean gameIsOnline = message.optBoolean("gameOnline", false);
+                        String joinedRoom = message.optString("room", roomCode);
+                        runOnUiThread(() -> {
+                            if (generation != connectionGeneration) return;
+                            roomCode = joinedRoom;
+                            roomFooter.setText("ROOM  " + roomCode);
+                            isPaired = true;
+                            if (gameIsOnline) setConnection("GAME LINKED", "Paired. Roll to steer; pitch to adjust rail speed.", true);
+                            else setConnection("WAITING FOR GAME", "Room found. Waiting for the game screen to reconnect.", false);
+                            connectButton.setText("DISCONNECT");
+                        });
+                    } else if (type.equals("game")) {
+                        boolean connected = message.optBoolean("connected", false);
+                        runOnUiThread(() -> {
+                            if (generation != connectionGeneration) return;
+                            if (connected) setConnection("GAME LINKED", "Game screen connected. You are in the cockpit.", true);
+                            else if (isPaired) setConnection("WAITING FOR GAME", "Game screen went offline. Reconnecting automatically.", false);
+                        });
+                    } else if (type.equals("hit")) {
+                        String target = message.optString("target", "");
+                        if ("asteroid".equals(target)) {
+                            runOnUiThread(() -> {
+                                if (generation == connectionGeneration) vibrate(24, 48);
+                            });
+                        } else if ("player".equals(target)) {
+                            runOnUiThread(() -> {
+                                if (generation == connectionGeneration) vibrate(85, 145);
+                            });
+                        }
+                    } else if (type.equals("latency")) {
+                        long sentAt = message.optLong("t", -1);
+                        if (sentAt >= 0) {
+                            long roundTrip = Math.max(0, SystemClock.elapsedRealtime() - sentAt);
+                            runOnUiThread(() -> {
+                                if (generation == connectionGeneration) {
+                                    latencyFooter.setText("LINK " + roundTrip + "MS");
+                                }
+                            });
+                        }
+                    } else if (type.equals("error")) {
+                        String errorText = message.optString("message", "Could not join that room.");
+                        runOnUiThread(() -> {
+                            if (generation != connectionGeneration) return;
+                            isPaired = false;
+                            wantsConnection = false;
+                            lastError = errorText;
+                            setConnection("ROOM NOT FOUND", errorText, false);
+                            connectButton.setText("CONNECT TO GAME");
+                            if (socket != null) socket.close(1000, "Room not found");
+                        });
+                    }
+                } catch (JSONException ignored) {
+                    // Ignore non-JSON application messages.
+                }
+            }
+
+            @Override public void onClosed(WebSocket webSocket, int code, String reason) {
+                handleSocketLoss(generation, "Connection closed. Reconnecting…");
+            }
+
+            @Override public void onFailure(WebSocket webSocket, Throwable error, Response response) {
+                String detail = error.getMessage() == null ? "Network unavailable." : error.getMessage();
+                if (response != null) detail = "HTTP " + response.code() + " · " + detail;
+                handleSocketLoss(generation, detail);
+            }
+        });
+        socket = newSocket;
+    }
+
+    private void handleSocketLoss(long generation, String detail) {
+        runOnUiThread(() -> {
+            if (generation != connectionGeneration) return;
+            socket = null;
+            isPaired = false;
+            if (wantsConnection) {
+                String detailText = detail == null || detail.trim().isEmpty() ? "Network unavailable" : detail.trim();
+                if (detailText.length() > 100) detailText = detailText.substring(0, 97) + "…";
+                setConnection("RECONNECTING", "Can't reach server (" + detailText + "). Check the server is running and the phone can reach that address.", false);
+                connectButton.setText("CANCEL LINK");
+                handler.postDelayed(() -> {
+                    if (wantsConnection && generation == connectionGeneration) openSocket();
+                }, 1400);
+            } else if (!lastError.isEmpty()) {
+                setConnection("ROOM NOT FOUND", lastError, false);
+                connectButton.setText("CONNECT TO GAME");
+            } else {
+                setConnection("NOT PAIRED", detail, false);
+                connectButton.setText("CONNECT TO GAME");
+            }
+        });
+    }
+
+    private void disconnectFromGame() {
+        wantsConnection = false;
+        connectionGeneration++;
+        isPaired = false;
+        WebSocket active = socket;
+        socket = null;
+        if (active != null) active.close(1000, "Controller disconnected");
+        connectButton.setText("CONNECT TO GAME");
+        setConnection("NOT PAIRED", "Enter the laptop's server address and room code to connect.", false);
+    }
+
+    private void setConnection(String badge, String message, boolean connected) {
+        if (connectionBadge == null) return;
+        connectionBadge.setText(badge);
+        connectionBadge.setTextColor(connected ? MINT : (badge.contains("NOT") || badge.contains("ROOM") ? RED : ORANGE));
+        connectionBadge.setBackground(roundBackground(
+                connected ? 0x143ECA7F : 0x14FFB968,
+                connected ? 0x4468D994 : 0x44FFB968, 6));
+        if (connectionMessage != null) connectionMessage.setText(message);
+        if (roomFooter != null && !roomCode.isEmpty()) roomFooter.setText("ROOM  " + roomCode);
+    }
+
+    private void enableMotion() {
+        if (motionEnabled) {
+            sensorManager.unregisterListener(this);
+            motionEnabled = false;
+            sensorSeen = false;
+            motionSteer = 0f;
+            effectiveSteer = 0f;
+            motionThrottle = 0f;
+            effectiveThrottle = 0f;
+            motionButton.setText("ENABLE MOTION");
+            sensorState.setText("NOT ENABLED");
+            sensorState.setTextColor(ORANGE);
+            motionMessage.setText("Motion paused. Enable sensors to steer and control rail speed.");
+            calibrateButton.setEnabled(false);
+            updateEffectiveControls();
+            return;
+        }
+
+        rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
+        if (rotationSensor == null) rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+        gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+        if (rotationSensor == null) {
+            sensorState.setText("NO ROTATION SENSOR");
+            sensorState.setTextColor(RED);
+            motionMessage.setText("This Android device has no rotation sensor; tilt steering is unavailable.");
+            return;
+        }
+        rotationSensorType = rotationSensor.getType();
+        boolean registered = sensorManager.registerListener(this, rotationSensor, SensorManager.SENSOR_DELAY_GAME);
+        if (gyroscope != null) sensorManager.registerListener(this, gyroscope, SensorManager.SENSOR_DELAY_GAME);
+        motionEnabled = registered;
+        if (registered) {
+            sensorState.setText("SENSOR STARTING");
+            sensorState.setTextColor(CYAN);
+            motionButton.setText("MOTION ENABLED");
+            calibrateButton.setEnabled(true);
+            motionMessage.setText("Keep the phone upright. Neutral steering and speed are learned now.");
+            sensorSeen = false;
+            lastRoll = Float.NaN;
+            neutralRoll = Float.NaN;
+            lastPitch = Float.NaN;
+            neutralPitch = Float.NaN;
+            motionSteer = 0f;
+            motionThrottle = 0f;
+        } else {
+            sensorState.setText("SENSOR ERROR");
+            sensorState.setTextColor(RED);
+            motionMessage.setText("Could not start the rotation sensor. Check sensor settings and retry.");
+        }
+    }
+
+    private void calibrateNeutral() {
+        if (!motionEnabled || Float.isNaN(lastRoll)) {
+            motionMessage.setText("Waiting for a sensor reading — hold the phone still, then retry.");
+            return;
+        }
+        neutralRoll = lastRoll;
+        neutralPitch = lastPitch;
+        motionSteer = 0f;
+        motionThrottle = 0f;
+        updateEffectiveControls();
+        angleValue.setText("0°");
+        motionMessage.setText("Neutral set. Roll to steer; pitch to change rail speed.");
+        vibrate(18);
+    }
+
+    private void updateEffectiveControls() {
+        effectiveSteer = Math.max(-1f, Math.min(1f, motionSteer));
+        effectiveThrottle = Math.max(-1f, Math.min(1f, motionThrottle));
+        if (dialView != null) dialView.setReading(effectiveSteer, currentDeltaDegrees());
+        updateRailSpeedDisplay();
+    }
+
+    private void updateRailSpeedDisplay() {
+        float multiplier = Math.max(.45f, Math.min(1.8f, 1f + effectiveThrottle * .8f));
+        if (railSpeedValue != null) railSpeedValue.setText(String.format(Locale.US, "%.1f×", multiplier));
+        if (speedMeter != null) speedMeter.setThrottle(effectiveThrottle);
+    }
+
+    private float currentDeltaDegrees() {
+        if (Float.isNaN(lastRoll) || Float.isNaN(neutralRoll)) return 0f;
+        return normalizeDegrees(lastRoll - neutralRoll);
+    }
+
+    private static float normalizeDegrees(float value) {
+        while (value > 180f) value -= 360f;
+        while (value < -180f) value += 360f;
+        return value;
+    }
+
+    @Override public void onSensorChanged(SensorEvent event) {
+        if (event.sensor.getType() == rotationSensorType) {
+            SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values);
+            SensorManager.getOrientation(rotationMatrix, orientationAngles);
+            lastRoll = (float) Math.toDegrees(orientationAngles[2]);
+            lastPitch = (float) Math.toDegrees(orientationAngles[1]);
+            if (!sensorSeen || Float.isNaN(neutralRoll) || Float.isNaN(neutralPitch)) {
+                neutralRoll = lastRoll;
+                neutralPitch = lastPitch;
+            }
+            sensorSeen = true;
+
+            float rollDelta = normalizeDegrees(lastRoll - neutralRoll);
+            float pitchDelta = normalizeDegrees(lastPitch - neutralPitch);
+            float rollAdjusted = Math.abs(rollDelta) < 2f ? 0f : rollDelta - Math.signum(rollDelta) * 2f;
+            float pitchAdjusted = Math.abs(pitchDelta) < 1.5f ? 0f : pitchDelta - Math.signum(pitchDelta) * 1.5f;
+            motionSteer = Math.max(-1f, Math.min(1f, rollAdjusted / 27f));
+            motionThrottle = Math.max(-1f, Math.min(1f, pitchAdjusted / 25f));
+
+            float gyroLead = Math.max(-.12f, Math.min(.12f, gyroRollRateDegrees * .004f));
+            float fusedTarget = Math.max(-1f, Math.min(1f, motionSteer + gyroLead));
+            effectiveSteer += (fusedTarget - effectiveSteer) * .34f;
+            effectiveThrottle += (motionThrottle - effectiveThrottle) * .24f;
+            sensorState.setText("SENSOR ACTIVE");
+            sensorState.setTextColor(MINT);
+            motionMessage.setText("Roll to steer · pitch forward/back to change rail speed.");
+            angleValue.setText(String.format(Locale.US, "%d°", Math.round(rollDelta)));
+            if (dialView != null) dialView.setReading(effectiveSteer, rollDelta);
+            updateRailSpeedDisplay();
+        } else if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
+            if (event.values.length > 1) gyroRollRateDegrees = (float) Math.toDegrees(event.values[1]);
+        }
+    }
+
+    private void vibrate(long millis) {
+        vibrate(millis, -1);
+    }
+
+    private void vibrate(long millis, int requestedAmplitude) {
+        try {
+            Vibrator vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+            if (vibrator == null || !vibrator.hasVibrator()) return;
+            if (Build.VERSION.SDK_INT >= 26) {
+                int amplitude = requestedAmplitude;
+                if (amplitude != VibrationEffect.DEFAULT_AMPLITUDE && !vibrator.hasAmplitudeControl()) {
+                    amplitude = VibrationEffect.DEFAULT_AMPLITUDE;
+                }
+                vibrator.vibrate(VibrationEffect.createOneShot(millis, amplitude));
+            } else {
+                vibrator.vibrate(millis);
+            }
+        } catch (Exception ignored) { }
+    }
+
+    @Override public void onAccuracyChanged(Sensor sensor, int accuracy) { }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (motionEnabled && rotationSensor != null) {
+            sensorManager.registerListener(this, rotationSensor, SensorManager.SENSOR_DELAY_GAME);
+            if (gyroscope != null) sensorManager.registerListener(this, gyroscope, SensorManager.SENSOR_DELAY_GAME);
+        }
+    }
+
+    @Override protected void onPause() {
+        if (sensorManager != null) sensorManager.unregisterListener(this);
+        super.onPause();
+    }
+
+    @Override protected void onDestroy() {
+        handler.removeCallbacks(inputTicker);
+        handler.removeCallbacksAndMessages(null);
+        if (sensorManager != null) sensorManager.unregisterListener(this);
+        wantsConnection = false;
+        if (socket != null) socket.close(1000, "App closed");
+        httpClient.dispatcher().executorService().shutdown();
+        super.onDestroy();
+    }
+
+    private class TiltDialView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private float steer = 0f;
+        private float degrees = 0f;
+
+        TiltDialView(Context context) {
+            super(context);
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
+
+        void setReading(float newSteer, float newDegrees) {
+            steer = Math.max(-1f, Math.min(1f, newSteer));
+            degrees = newDegrees;
+            invalidate();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float cx = getWidth() / 2f;
+            float cy = getHeight() / 2f;
+            float r = Math.min(getWidth(), getHeight()) * .43f;
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(1));
+            paint.setColor(0x335DA1B4);
+            paint.setPathEffect(new DashPathEffect(new float[]{dp(3), dp(4)}, 0));
+            canvas.drawCircle(cx, cy, r, paint);
+            paint.setPathEffect(null);
+            paint.setColor(0x4455DCE3);
+            canvas.drawCircle(cx, cy, r * .67f, paint);
+            paint.setColor(0x303F7A91);
+            canvas.drawLine(cx - r * .82f, cy, cx + r * .82f, cy, paint);
+            canvas.drawLine(cx, cy - r * .82f, cx, cy + r * .82f, paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(0xFF617D91);
+            paint.setTextSize(dp(7));
+            paint.setTypeface(Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL));
+            canvas.drawText("LEFT", cx - r * .72f, cy + r + dp(10), paint);
+            canvas.drawText("RIGHT", cx + r * .30f, cy + r + dp(10), paint);
+
+            float markerX = cx + steer * r * .65f;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShadowLayer(dp(10), 0, 0, 0x9965E8EC);
+            paint.setColor(0xFF65E8EC);
+            canvas.drawCircle(markerX, cy, dp(9), paint);
+            paint.clearShadowLayer();
+            paint.setColor(0xFF0B1D28);
+            canvas.drawCircle(markerX, cy, dp(3), paint);
+
+            paint.setColor(0xFF8498AB);
+            paint.setTextSize(dp(8));
+            canvas.drawText(String.format(Locale.US, "%d°", Math.round(degrees)), cx - dp(10), cy - r * .72f, paint);
+        }
+    }
+
+    private class SpeedMeterView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private float throttle = 0f;
+
+        SpeedMeterView(Context context) {
+            super(context);
+            setClickable(false);
+        }
+
+        void setThrottle(float value) {
+            throttle = Math.max(-1f, Math.min(1f, value));
+            invalidate();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float left = dp(2);
+            float right = getWidth() - dp(2);
+            float center = (left + right) / 2f;
+            float top = (getHeight() - dp(7)) / 2f;
+            float bottom = top + dp(7);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(0xFF1A2938);
+            canvas.drawRoundRect(left, top, right, bottom, dp(4), dp(4), paint);
+            float end = center + throttle * (right - left) * .47f;
+            paint.setColor(throttle >= 0 ? CYAN : ORANGE);
+            canvas.drawRoundRect(Math.min(center, end), top, Math.max(center, end), bottom, dp(4), dp(4), paint);
+            paint.setColor(0xFFDAE9F0);
+            canvas.drawRoundRect(center - dp(1), top - dp(3), center + dp(1), bottom + dp(3), dp(1), dp(1), paint);
+        }
+    }
+}

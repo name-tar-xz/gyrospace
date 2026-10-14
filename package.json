@@ -1,0 +1,12 @@
+{
+  "name": "starlane-motion-arcade",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A browser rail-shooter with a native Android motion controller.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

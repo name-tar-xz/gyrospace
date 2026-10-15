@@ -23,7 +23,6 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.view.Gravity;
 import android.view.View;
-import android.view.Window;
 import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.EditorInfo;
 import android.text.InputFilter;
@@ -83,7 +82,6 @@ public class MainActivity extends Activity implements SensorEventListener {
     private final float[] orientationAngles = new float[3];
     private int rotationSensorType = -1;
     private boolean motionEnabled = false;
-    private boolean sensorSeen = false;
     private float lastRoll = Float.NaN;
     private float neutralRoll = Float.NaN;
     private float lastPitch = Float.NaN;
@@ -130,10 +128,6 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Window window = getWindow();
-        window.setStatusBarColor(BG);
-        window.setNavigationBarColor(BG);
-        if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(true);
 
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         SharedPreferences preferences = getSharedPreferences("starlane-controller", MODE_PRIVATE);
@@ -559,7 +553,6 @@ public class MainActivity extends Activity implements SensorEventListener {
             sensorState.setTextColor(CYAN);
             calibrateButton.setEnabled(true);
             motionMessage.setText("Motion is on. Hold the phone neutral and tap CALIBRATE.");
-            sensorSeen = false;
             lastRoll = Float.NaN;
             neutralRoll = Float.NaN;
             lastPitch = Float.NaN;
@@ -619,11 +612,10 @@ public class MainActivity extends Activity implements SensorEventListener {
             SensorManager.getOrientation(rotationMatrix, orientationAngles);
             lastRoll = (float) Math.toDegrees(orientationAngles[2]);
             lastPitch = (float) Math.toDegrees(orientationAngles[1]);
-            if (!sensorSeen || Float.isNaN(neutralRoll) || Float.isNaN(neutralPitch)) {
+            if (Float.isNaN(neutralRoll) || Float.isNaN(neutralPitch)) {
                 neutralRoll = lastRoll;
                 neutralPitch = lastPitch;
             }
-            sensorSeen = true;
 
             float rollDelta = normalizeDegrees(lastRoll - neutralRoll);
             float pitchDelta = normalizeDegrees(lastPitch - neutralPitch);

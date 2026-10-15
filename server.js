@@ -163,6 +163,7 @@ class WebSocketPeer {
     this.buffer = Buffer.alloc(0);
     this.fragments = [];
     this.fragmentOpcode = null;
+    this.fragmentBytes = 0;
     this.closed = false;
     this.alive = true;
     this.role = null;
@@ -233,25 +234,32 @@ class WebSocketPeer {
       }
 
       if (opcode === 0x0) {
-        if (this.fragmentOpcode === null) continue;
+        if (this.fragmentOpcode === null) return this.close(1002, 'Unexpected continuation frame');
+        this.fragmentBytes += payload.length;
+        if (this.fragmentBytes > MAX_MESSAGE_BYTES) return this.close(1009, 'Message too large');
         this.fragments.push(payload);
         if (fin) {
           const full = Buffer.concat(this.fragments);
-          const completedOpcode = this.fragmentOpcode;
           this.fragments = [];
           this.fragmentOpcode = null;
-          if (completedOpcode === 0x1) this.onMessage(full.toString('utf8'));
+          this.fragmentBytes = 0;
+          this.onMessage(full.toString('utf8'));
         }
         continue;
       }
-      if (opcode === 0x1 || opcode === 0x2) {
+      if (opcode === 0x2) return this.close(1003, 'Text messages only');
+      if (opcode === 0x1) {
+        if (this.fragmentOpcode !== null) return this.close(1002, 'Unexpected data frame');
         if (fin) {
-          if (opcode === 0x1) this.onMessage(payload.toString('utf8'));
+          this.onMessage(payload.toString('utf8'));
         } else {
           this.fragmentOpcode = opcode;
           this.fragments = [payload];
+          this.fragmentBytes = payload.length;
         }
+        continue;
       }
+      return this.close(1002, 'Unsupported frame opcode');
     }
   }
 
@@ -305,7 +313,6 @@ const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
 };
 
 function getLanAddresses() {

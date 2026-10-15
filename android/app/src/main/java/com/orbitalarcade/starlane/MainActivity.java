@@ -69,7 +69,6 @@ public class MainActivity extends Activity implements SensorEventListener {
     private TextView connectionMessage;
     private TextView sensorState;
     private TextView motionMessage;
-    private TextView angleValue;
     private TextView roomFooter;
     private TextView latencyFooter;
     private Button connectButton;
@@ -213,15 +212,9 @@ public class MainActivity extends Activity implements SensorEventListener {
         pairCard.addView(connectionMessage, marginParams(-1, -2, 1, 10, 0));
 
         LinearLayout motionCard = card(content, "MOTION SENSOR", "ANDROID DEVICE SENSOR");
-        LinearLayout sensorRow = new LinearLayout(this);
-        sensorRow.setGravity(Gravity.CENTER_VERTICAL);
         sensorState = makeText("SENSOR STARTING", 8, CYAN, true);
         sensorState.setLetterSpacing(.10f);
-        sensorRow.addView(sensorState, new LinearLayout.LayoutParams(0, dp(24), 1));
-        angleValue = makeText("0°", 13, CYAN, true);
-        angleValue.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        sensorRow.addView(angleValue);
-        motionCard.addView(sensorRow);
+        motionCard.addView(sensorState, new LinearLayout.LayoutParams(-1, dp(24)));
 
         dialView = new TiltDialView(this);
         LinearLayout.LayoutParams dialParams = new LinearLayout.LayoutParams(dp(176), dp(176));
@@ -236,7 +229,6 @@ public class MainActivity extends Activity implements SensorEventListener {
 
         calibrateButton = makeButton("◎  CALIBRATE", 0xFF172332, 0xFFB9C7D5);
         calibrateButton.setEnabled(false);
-        calibrateButton.setBackground(roundBackground(0xFF172332, 0xFF35475A, 6));
         motionCard.addView(calibrateButton, marginParams(-1, 42, 0, 0, 0));
         calibrateButton.setOnClickListener(view -> calibrateNeutral());
 
@@ -319,8 +311,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         button.setAllCaps(false);
         button.setMinHeight(dp(42));
         button.setPadding(dp(12), 0, dp(12), 0);
-        button.setBackground(roundBackground(background, background == CYAN ? 0xFF65E8EC : 0xFF35475A, 6));
-        if (background == CYAN) button.setBackground(roundBackground(CYAN, CYAN, 6));
+        int stroke = background == CYAN ? CYAN : 0xFF35475A;
+        button.setBackground(roundBackground(background, stroke, 6));
         return button;
     }
 
@@ -595,7 +587,6 @@ public class MainActivity extends Activity implements SensorEventListener {
         motionSteer = 0f;
         motionThrottle = 0f;
         updateEffectiveControls();
-        angleValue.setText("0°");
         motionMessage.setText("Neutral set. Roll to steer; pitch to change rail speed.");
         vibrate(18);
     }
@@ -648,7 +639,6 @@ public class MainActivity extends Activity implements SensorEventListener {
             sensorState.setText("SENSOR ACTIVE");
             sensorState.setTextColor(MINT);
             motionMessage.setText("Roll to steer · pitch forward/back to change rail speed.");
-            angleValue.setText(String.format(Locale.US, "%d°", Math.round(rollDelta)));
             updateTiltIndicator();
         } else if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
             if (event.values.length > 1) gyroRollRateDegrees = (float) Math.toDegrees(event.values[1]);
@@ -693,7 +683,6 @@ public class MainActivity extends Activity implements SensorEventListener {
     }
 
     @Override protected void onDestroy() {
-        handler.removeCallbacks(inputTicker);
         handler.removeCallbacksAndMessages(null);
         if (sensorManager != null) sensorManager.unregisterListener(this);
         wantsConnection = false;
@@ -704,12 +693,14 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     private class TiltDialView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final DashPathEffect dialDashEffect;
         private float steer = 0f;
         private float throttle = 0f;
         private float speed = 1f;
 
         TiltDialView(Context context) {
             super(context);
+            dialDashEffect = new DashPathEffect(new float[]{dp(3), dp(4)}, 0);
             setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         }
 
@@ -729,7 +720,7 @@ public class MainActivity extends Activity implements SensorEventListener {
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(dp(1));
             paint.setColor(0x335DA1B4);
-            paint.setPathEffect(new DashPathEffect(new float[]{dp(3), dp(4)}, 0));
+            paint.setPathEffect(dialDashEffect);
             canvas.drawCircle(cx, cy, r, paint);
             paint.setPathEffect(null);
             paint.setColor(0x4455DCE3);

@@ -461,7 +461,7 @@
     }
     ctx.restore();
 
-    // The three glowing rails are the visual anchor for the on-rails flight path.
+    // Two glowing rail pairs converge on the horizon: the visual anchor for the on-rails flight path.
     const railPairs = [
       { x0: .442, x1: .255, a: .32 },
       { x0: .558, x1: .745, a: .32 },

@@ -201,7 +201,6 @@ class WebSocketPeer {
         offset = 10;
       }
 
-      if (payloadLength > MAX_MESSAGE_BYTES) return this.close(1009, 'Message too large');
       let mask;
       if (masked) {
         if (this.buffer.length < offset + 4) return;

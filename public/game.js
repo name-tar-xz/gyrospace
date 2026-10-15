@@ -45,7 +45,6 @@
   let inputThrottle = 0;
   let railSpeed = 1;
   let railPhase = 0;
-  let keyboardX = 0;
   let shootTimer = 0;
   let spawnTimer = 0.6;
   let elapsed = 0;
@@ -53,11 +52,10 @@
   let hitFlash = 0;
   let lastFrame = performance.now();
   let stars = [];
-  let enemies = [];
+  let asteroids = [];
   let bullets = [];
   let particles = [];
   let copyTimeout = null;
-  const keys = new Set();
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
@@ -225,7 +223,7 @@
     elapsed = 0;
     invulnerable = 0;
     hitFlash = 0;
-    enemies = [];
+    asteroids = [];
     bullets = [];
     particles = [];
     gameMode = 'playing';
@@ -250,24 +248,9 @@
   updateHUD();
 
   function updatePlayerTarget() {
-    const left = keys.has('ArrowLeft') || keys.has('a') || keys.has('A');
-    const right = keys.has('ArrowRight') || keys.has('d') || keys.has('D');
-    if (left || right) keyboardX = (right ? 1 : 0) - (left ? 1 : 0);
-    else keyboardX = 0;
-    const desired = (left || right) ? .5 + keyboardX * .42 : .5 + inputX * .44;
+    const desired = .5 + inputX * .44;
     playerX += (clamp(desired, .055, .945) - playerX) * Math.min(1, 9 * frameDelta);
   }
-
-  window.addEventListener('keydown', (event) => {
-    const key = event.key;
-    if (['ArrowLeft', 'ArrowRight', ' ', 'Spacebar'].includes(key)) event.preventDefault();
-    keys.add(key);
-    if ((key === 'Enter' || key === ' ') && (gameMode === 'ready' || gameMode === 'gameover')) startRun();
-  });
-  window.addEventListener('keyup', (event) => {
-    keys.delete(event.key);
-  });
-  window.addEventListener('blur', () => { keys.clear(); });
 
   copyButton.addEventListener('click', async () => {
     const address = androidServerAddress || window.location.origin;
@@ -283,57 +266,23 @@
     copyTimeout = setTimeout(() => { copyLabel.textContent = 'COPY ANDROID SERVER URL'; copyNote.textContent = ''; }, 3200);
   });
 
-  function spawnEnemy() {
+  function spawnAsteroid() {
     const lane = Math.random();
-    enemies.push({
+    asteroids.push({
       x: .11 + lane * .78,
       depth: 0,
       speed: .24 + Math.min(wave - 1, 9) * .019 + random(-.025, .035),
       size: random(.85, 1.2),
       phase: random(0, Math.PI * 2),
-      type: Math.random() < .68 ? 'rock' : 'drone',
       dead: false
     });
   }
 
   function fireShot() {
-    const startX = playerX * width;
-    const startY = height * .755;
-    const shotSpeed = height * 1.35;
-    const horizon = height * .24;
-    const travel = height * .64;
-    let target = null;
-    let nearestDistance = Infinity;
-
-    for (const enemy of enemies) {
-      if (enemy.dead) continue;
-      const enemyY = horizon + enemy.depth * travel;
-      const distance = Math.hypot(enemy.x * width - startX, enemyY - startY);
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        target = enemy;
-      }
-    }
-
-    let vx = 0;
-    let vy = -shotSpeed;
-    if (target) {
-      const driftX = Math.cos(elapsed * 1.15 + target.phase) * 1.15 * .004;
-      let flightTime = nearestDistance / shotSpeed;
-      for (let i = 0; i < 2; i++) {
-        const aimX = clamp(target.x + driftX * flightTime, .06, .94) * width;
-        const aimY = horizon + (target.depth + target.speed * railSpeed * flightTime) * travel;
-        const dx = aimX - startX;
-        const dy = aimY - startY;
-        const distance = Math.hypot(dx, dy) || 1;
-        vx = dx / distance * shotSpeed;
-        vy = dy / distance * shotSpeed;
-        flightTime = distance / shotSpeed;
-      }
-    }
-
-    bullets.push({ x: playerX, y: startY, vx: vx / width, vy, trail: random(14, 24), dead: false });
-    particles.push({ x: startX, y: startY + 5, vx: random(-18, 18), vy: random(-80, -20), life: .17, max: .17, size: random(1, 2.3), color: '#c4ffff' });
+    const x = playerX;
+    const y = height * .755;
+    bullets.push({ x, y, vy: -height * 1.12, trail: random(14, 24), dead: false });
+    particles.push({ x: x * width, y: y + 5, vx: random(-18, 18), vy: random(-80, -20), life: .17, max: .17, size: random(1, 2.3), color: '#c4ffff' });
   }
 
   function explode(x, y, color = '#ffce91') {
@@ -376,43 +325,42 @@
 
       spawnTimer -= dt * railSpeed;
       if (spawnTimer <= 0) {
-        spawnEnemy();
+        spawnAsteroid();
         const base = Math.max(.48, .95 - Math.min(wave - 1, 10) * .035);
         spawnTimer = base * random(.72, 1.24);
       }
 
       const horizon = height * .24;
       const travel = height * .64;
-      for (const enemy of enemies) {
-        enemy.depth += enemy.speed * dt * railSpeed;
-        enemy.x += Math.sin(elapsed * 1.15 + enemy.phase) * .004 * dt;
-        const enemyY = horizon + enemy.depth * travel;
-        const enemyRadius = (9 + enemy.depth * 19) * enemy.size;
+      for (const asteroid of asteroids) {
+        asteroid.depth += asteroid.speed * dt * railSpeed;
+        asteroid.x += Math.sin(elapsed * 1.15 + asteroid.phase) * .004 * dt;
+        const asteroidY = horizon + asteroid.depth * travel;
+        const asteroidRadius = (9 + asteroid.depth * 19) * asteroid.size;
         for (const bullet of bullets) {
           if (bullet.dead) continue;
           const bx = bullet.x * width;
-          if (Math.hypot(bx - enemy.x * width, bullet.y - enemyY) < enemyRadius + 5) {
+          if (Math.abs(bx - asteroid.x * width) < asteroidRadius * .85 && Math.abs(bullet.y - asteroidY) < asteroidRadius + 8) {
             bullet.dead = true;
-            enemy.dead = true;
-            if (enemy.type === 'rock') sendGameEvent({ type: 'hit', target: 'asteroid' });
-            score += enemy.type === 'drone' ? 150 : 100;
+            asteroid.dead = true;
+            sendGameEvent({ type: 'hit', target: 'asteroid' });
+            score += 100;
             wave = Math.min(99, Math.floor(score / 600) + 1);
-            explode(enemy.x * width, enemyY, enemy.type === 'drone' ? '#87e7ff' : '#ffc777');
+            explode(asteroid.x * width, asteroidY, '#ffc777');
             updateHUD();
             break;
           }
         }
-        if (!enemy.dead && enemy.depth > .82 && Math.abs(enemy.x - playerX) < .04 + enemy.depth * .014) {
-          enemy.dead = true;
+        if (!asteroid.dead && asteroid.depth > .82 && Math.abs(asteroid.x - playerX) < .04 + asteroid.depth * .014) {
+          asteroid.dead = true;
           damageShip();
         }
-        if (enemy.depth > 1.12) enemy.dead = true;
+        if (asteroid.depth > 1.12) asteroid.dead = true;
       }
-      enemies = enemies.filter((enemy) => !enemy.dead);
+      asteroids = asteroids.filter((asteroid) => !asteroid.dead);
       for (const bullet of bullets) {
-        bullet.x += bullet.vx * dt;
         bullet.y += bullet.vy * dt;
-        if (bullet.y < height * .17 || bullet.x < -.1 || bullet.x > 1.1) bullet.dead = true;
+        if (bullet.y < height * .17) bullet.dead = true;
       }
       bullets = bullets.filter((bullet) => !bullet.dead);
     } else {
@@ -541,71 +489,44 @@
     ctx.fillRect(0, horizon - 2, width, 32);
   }
 
-  function drawEnemy(enemy) {
+  function drawAsteroid(asteroid) {
     const horizon = height * .24;
-    const y = horizon + enemy.depth * height * .64;
-    const x = enemy.x * width;
-    const size = (8 + enemy.depth * 23) * enemy.size;
+    const y = horizon + asteroid.depth * height * .64;
+    const x = asteroid.x * width;
+    const size = (8 + asteroid.depth * 23) * asteroid.size;
     const scale = Math.max(.45, size / 24);
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(scale, scale);
-    const glowColor = enemy.type === 'drone' ? 'rgba(91, 206, 255, .55)' : 'rgba(255, 174, 96, .42)';
-    ctx.shadowColor = glowColor;
-    ctx.shadowBlur = 12 + enemy.depth * 8;
-    if (enemy.type === 'drone') {
-      ctx.rotate(Math.sin(elapsed * 1.4 + enemy.phase) * .13);
-      ctx.fillStyle = '#304f78';
-      ctx.strokeStyle = '#8dddf0';
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.moveTo(0, -11);
-      ctx.lineTo(12, -2);
-      ctx.lineTo(8, 8);
-      ctx.lineTo(0, 11);
-      ctx.lineTo(-8, 8);
-      ctx.lineTo(-12, -2);
-      ctx.closePath();
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#b9f9ff';
-      ctx.beginPath(); ctx.arc(0, 0, 2.2, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(139, 229, 255, .65)';
-      ctx.beginPath(); ctx.moveTo(-17, 0); ctx.lineTo(-11, 0); ctx.moveTo(11, 0); ctx.lineTo(17, 0); ctx.stroke();
-    } else {
-      ctx.rotate(Math.sin(elapsed * .9 + enemy.phase) * .16 + enemy.phase * .15);
-      ctx.fillStyle = '#70543d';
-      ctx.strokeStyle = '#e6b576';
-      ctx.lineWidth = 1.15;
-      ctx.beginPath();
-      ctx.moveTo(-2, -12); ctx.lineTo(7, -10); ctx.lineTo(12, -3); ctx.lineTo(8, 4);
-      ctx.lineTo(5, 12); ctx.lineTo(-4, 10); ctx.lineTo(-11, 5); ctx.lineTo(-12, -3); ctx.closePath();
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = 'rgba(27, 31, 43, .7)';
-      ctx.beginPath(); ctx.arc(4, -2, 2.2, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(-5, 4, 1.4, 0, Math.PI * 2); ctx.fill();
-    }
+    ctx.rotate(Math.sin(elapsed * .9 + asteroid.phase) * .16 + asteroid.phase * .15);
+    ctx.shadowColor = 'rgba(255, 174, 96, .42)';
+    ctx.shadowBlur = 12 + asteroid.depth * 8;
+    ctx.fillStyle = '#70543d';
+    ctx.strokeStyle = '#e6b576';
+    ctx.lineWidth = 1.15;
+    ctx.beginPath();
+    ctx.moveTo(-2, -12); ctx.lineTo(7, -10); ctx.lineTo(12, -3); ctx.lineTo(8, 4);
+    ctx.lineTo(5, 12); ctx.lineTo(-4, 10); ctx.lineTo(-11, 5); ctx.lineTo(-12, -3); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(27, 31, 43, .7)';
+    ctx.beginPath(); ctx.arc(4, -2, 2.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-5, 4, 1.4, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
 
   function drawBullet(bullet) {
     const x = bullet.x * width;
     const y = bullet.y;
-    const velocityX = bullet.vx * width;
-    const velocityY = bullet.vy;
-    const velocity = Math.hypot(velocityX, velocityY) || 1;
-    const tailX = x - velocityX / velocity * bullet.trail;
-    const tailY = y - velocityY / velocity * bullet.trail;
     ctx.save();
-    const grad = ctx.createLinearGradient(tailX, tailY, x, y);
+    const grad = ctx.createLinearGradient(x, y - bullet.trail, x, y + 4);
     grad.addColorStop(0, 'rgba(96, 239, 245, 0)');
     grad.addColorStop(.72, 'rgba(111, 243, 248, .45)');
     grad.addColorStop(1, '#e3ffff');
     ctx.strokeStyle = grad;
     ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
     ctx.shadowColor = '#63e6f3';
     ctx.shadowBlur = 9;
-    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(x, y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y - bullet.trail); ctx.lineTo(x, y + 2); ctx.stroke();
     ctx.restore();
   }
 
@@ -672,7 +593,7 @@
   function draw() {
     drawBackground();
     drawRails();
-    for (const enemy of enemies) drawEnemy(enemy);
+    for (const asteroid of asteroids) drawAsteroid(asteroid);
     for (const bullet of bullets) drawBullet(bullet);
     drawParticles();
     drawShip();

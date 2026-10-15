@@ -37,9 +37,9 @@ Both devices must be able to reach the same game server. On a LAN, use the lapto
 
 - **Android:** Motion is enabled automatically. The combined tilt dial moves left/right with steering and up/down with rail speed, with the speed multiplier shown in the dial. Use **Calibrate** to set neutral. Setup/pairing and calibration are the only touch controls; gameplay is motion-only.
 - **Weapons:** The interceptor autofires throughout a run. There is no shake-to-fire gesture.
-- Destroying an asteroid triggers a short, light phone pulse; taking damage from a collision triggers a stronger vibration. Destroying a drone does not trigger the asteroid-hit pulse.
+- Destroying an asteroid triggers a short, light phone pulse; taking damage from an asteroid collision triggers a stronger vibration.
 - The app streams steering and throttle at about 30 Hz; the game smooths both movement and rail speed locally. OkHttp maintains the WebSocket and the app displays a small round-trip estimate.
-- The game is a Canvas 2D forward-moving rail shooter with animated perspective rails, a speed-reactive starfield, asteroid and drone targets, hull/lives, waves and score. Autofiring laser bolts angle toward the nearest target. Desktop backup steering is **A/D** or **←/→**; **Enter/Space** starts a run. Firing is automatic.
+- The game is a Canvas 2D forward-moving rail shooter with animated perspective rails, a speed-reactive starfield, asteroids, hull/lives, waves and score. Lasers autofire straight ahead without homing; the paired Android app provides flight steering.
 - Rooms reconnect automatically after transient socket loss. Room codes are short-lived session identifiers, not authentication credentials.
 
 ## Stack and project layout

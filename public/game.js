@@ -297,10 +297,43 @@
   }
 
   function fireShot() {
-    const x = playerX;
-    const y = height * .755;
-    bullets.push({ x, y, vy: -height * 1.12, trail: random(14, 24), dead: false });
-    particles.push({ x: x * width, y: y + 5, vx: random(-18, 18), vy: random(-80, -20), life: .17, max: .17, size: random(1, 2.3), color: '#c4ffff' });
+    const startX = playerX * width;
+    const startY = height * .755;
+    const shotSpeed = height * 1.35;
+    const horizon = height * .24;
+    const travel = height * .64;
+    let target = null;
+    let nearestDistance = Infinity;
+
+    for (const enemy of enemies) {
+      if (enemy.dead) continue;
+      const enemyY = horizon + enemy.depth * travel;
+      const distance = Math.hypot(enemy.x * width - startX, enemyY - startY);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        target = enemy;
+      }
+    }
+
+    let vx = 0;
+    let vy = -shotSpeed;
+    if (target) {
+      const driftX = Math.cos(elapsed * 1.15 + target.phase) * 1.15 * .004;
+      let flightTime = nearestDistance / shotSpeed;
+      for (let i = 0; i < 2; i++) {
+        const aimX = clamp(target.x + driftX * flightTime, .06, .94) * width;
+        const aimY = horizon + (target.depth + target.speed * railSpeed * flightTime) * travel;
+        const dx = aimX - startX;
+        const dy = aimY - startY;
+        const distance = Math.hypot(dx, dy) || 1;
+        vx = dx / distance * shotSpeed;
+        vy = dy / distance * shotSpeed;
+        flightTime = distance / shotSpeed;
+      }
+    }
+
+    bullets.push({ x: playerX, y: startY, vx: vx / width, vy, trail: random(14, 24), dead: false });
+    particles.push({ x: startX, y: startY + 5, vx: random(-18, 18), vy: random(-80, -20), life: .17, max: .17, size: random(1, 2.3), color: '#c4ffff' });
   }
 
   function explode(x, y, color = '#ffce91') {
@@ -358,7 +391,7 @@
         for (const bullet of bullets) {
           if (bullet.dead) continue;
           const bx = bullet.x * width;
-          if (Math.abs(bx - enemy.x * width) < enemyRadius * .85 && Math.abs(bullet.y - enemyY) < enemyRadius + 8) {
+          if (Math.hypot(bx - enemy.x * width, bullet.y - enemyY) < enemyRadius + 5) {
             bullet.dead = true;
             enemy.dead = true;
             if (enemy.type === 'rock') sendGameEvent({ type: 'hit', target: 'asteroid' });
@@ -377,8 +410,9 @@
       }
       enemies = enemies.filter((enemy) => !enemy.dead);
       for (const bullet of bullets) {
+        bullet.x += bullet.vx * dt;
         bullet.y += bullet.vy * dt;
-        if (bullet.y < height * .17) bullet.dead = true;
+        if (bullet.y < height * .17 || bullet.x < -.1 || bullet.x > 1.1) bullet.dead = true;
       }
       bullets = bullets.filter((bullet) => !bullet.dead);
     } else {
@@ -556,16 +590,22 @@
   function drawBullet(bullet) {
     const x = bullet.x * width;
     const y = bullet.y;
+    const velocityX = bullet.vx * width;
+    const velocityY = bullet.vy;
+    const velocity = Math.hypot(velocityX, velocityY) || 1;
+    const tailX = x - velocityX / velocity * bullet.trail;
+    const tailY = y - velocityY / velocity * bullet.trail;
     ctx.save();
-    const grad = ctx.createLinearGradient(x, y - bullet.trail, x, y + 4);
+    const grad = ctx.createLinearGradient(tailX, tailY, x, y);
     grad.addColorStop(0, 'rgba(96, 239, 245, 0)');
     grad.addColorStop(.72, 'rgba(111, 243, 248, .45)');
     grad.addColorStop(1, '#e3ffff');
     ctx.strokeStyle = grad;
     ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
     ctx.shadowColor = '#63e6f3';
     ctx.shadowBlur = 9;
-    ctx.beginPath(); ctx.moveTo(x, y - bullet.trail); ctx.lineTo(x, y + 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(x, y); ctx.stroke();
     ctx.restore();
   }
 

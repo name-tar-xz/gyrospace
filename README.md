@@ -18,7 +18,7 @@ Open `http://localhost:3000` on the laptop. The game server binds to `0.0.0.0`. 
 2. Open the `android/` folder as an Android Studio project and allow Gradle to sync. The project downloads OkHttp 4.12.0 from Maven Central.
 3. Connect an Android phone with USB debugging enabled, or create an emulator. Choose **Run** in Android Studio to install `STARLANE Controller`.
 4. Start the game on the laptop. In the Android app, enter the game server address and room code, then tap **Connect to Game**.
-5. Tap **Enable Motion**, hold the phone in your preferred neutral position, and tap **Calibrate**. Roll left/right to steer; pitch forward to speed up the rail drive and pitch back to slow it down. Weapons autofire during flight. Successful asteroid hits vibrate the phone.
+5. Motion starts automatically when the app opens. Hold the phone in your preferred neutral position and tap **Calibrate**. Roll left/right to steer; pitch forward to speed up the rail drive and pitch back to slow it down.
 
 Build from a terminal with:
 
@@ -35,11 +35,11 @@ Both devices must be able to reach the same game server. On a LAN, use the lapto
 
 ## Controls and gameplay
 
-- **Android:** Roll the phone left/right to steer. Pitch it forward to accelerate the rails and back to slow them. Use **Calibrate** to set the current neutral position. Setup/pairing buttons are the only touch controls; gameplay is motion-only.
+- **Android:** Motion is enabled automatically. The combined tilt dial moves left/right with steering and up/down with rail speed, with the speed multiplier shown in the dial. Use **Calibrate** to set neutral. Setup/pairing and calibration are the only touch controls; gameplay is motion-only.
 - **Weapons:** The interceptor autofires throughout a run. There is no shake-to-fire gesture.
 - Destroying an asteroid triggers a short, light phone pulse; taking damage from a collision triggers a stronger vibration. Destroying a drone does not trigger the asteroid-hit pulse.
 - The app streams steering and throttle at about 30 Hz; the game smooths both movement and rail speed locally. OkHttp maintains the WebSocket and the app displays a small round-trip estimate.
-- The game is a Canvas 2D forward-moving rail shooter with animated perspective rails, a speed-reactive starfield, asteroid and drone targets, hull/lives, waves and score. Desktop backup steering is **A/D** or **←/→**; **Enter/Space** starts a run. Firing is automatic.
+- The game is a Canvas 2D forward-moving rail shooter with animated perspective rails, a speed-reactive starfield, asteroid and drone targets, hull/lives, waves and score. Autofiring laser bolts angle toward the nearest target. Desktop backup steering is **A/D** or **←/→**; **Enter/Space** starts a run. Firing is automatic.
 - Rooms reconnect automatically after transient socket loss. Room codes are short-lived session identifiers, not authentication credentials.
 
 ## Stack and project layout

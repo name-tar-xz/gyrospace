@@ -73,11 +73,8 @@ public class MainActivity extends Activity implements SensorEventListener {
     private TextView roomFooter;
     private TextView latencyFooter;
     private Button connectButton;
-    private Button motionButton;
     private Button calibrateButton;
     private TiltDialView dialView;
-    private SpeedMeterView speedMeter;
-    private TextView railSpeedValue;
 
     private SensorManager sensorManager;
     private Sensor rotationSensor;
@@ -218,7 +215,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         LinearLayout motionCard = card(content, "MOTION SENSOR", "ANDROID DEVICE SENSOR");
         LinearLayout sensorRow = new LinearLayout(this);
         sensorRow.setGravity(Gravity.CENTER_VERTICAL);
-        sensorState = makeText("NOT ENABLED", 8, ORANGE, true);
+        sensorState = makeText("SENSOR STARTING", 8, CYAN, true);
         sensorState.setLetterSpacing(.10f);
         sensorRow.addView(sensorState, new LinearLayout.LayoutParams(0, dp(24), 1));
         angleValue = makeText("0°", 13, CYAN, true);
@@ -233,42 +230,14 @@ public class MainActivity extends Activity implements SensorEventListener {
         dialParams.bottomMargin = dp(6);
         motionCard.addView(dialView, dialParams);
 
-        LinearLayout speedHeader = new LinearLayout(this);
-        speedHeader.setGravity(Gravity.CENTER_VERTICAL);
-        TextView speedLabel = label("RAIL SPEED");
-        speedHeader.addView(speedLabel, new LinearLayout.LayoutParams(0, dp(20), 1));
-        railSpeedValue = makeText("1.0×", 12, CYAN, true);
-        railSpeedValue.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        speedHeader.addView(railSpeedValue);
-        motionCard.addView(speedHeader, marginParams(-1, -2, 0, 2, 0));
-
-        speedMeter = new SpeedMeterView(this);
-        motionCard.addView(speedMeter, marginParams(-1, dp(15), 0, 4, 0));
-        LinearLayout speedLabels = new LinearLayout(this);
-        TextView slowLabel = makeText("SLOWER", 7, 0xFF728398, true);
-        TextView fastLabel = makeText("FASTER", 7, 0xFF728398, true);
-        speedLabels.addView(slowLabel, new LinearLayout.LayoutParams(0, dp(13), 1));
-        fastLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        speedLabels.addView(fastLabel, new LinearLayout.LayoutParams(0, dp(13), 1));
-        motionCard.addView(speedLabels);
-
-        motionMessage = makeText("Roll to steer; pitch forward/back to adjust rail speed.", 9, MUTED, false);
+        motionMessage = makeText("Roll to steer · pitch forward to speed up, back to slow down.", 9, MUTED, false);
         motionMessage.setGravity(Gravity.CENTER);
         motionCard.addView(motionMessage, marginParams(-1, -2, 0, 13, 0));
 
-        LinearLayout motionActions = new LinearLayout(this);
-        motionActions.setOrientation(LinearLayout.HORIZONTAL);
-        motionButton = makeButton("ENABLE MOTION", CYAN, BG);
         calibrateButton = makeButton("◎  CALIBRATE", 0xFF172332, 0xFFB9C7D5);
         calibrateButton.setEnabled(false);
         calibrateButton.setBackground(roundBackground(0xFF172332, 0xFF35475A, 6));
-        LinearLayout.LayoutParams actionLeft = new LinearLayout.LayoutParams(0, dp(42), 1.25f);
-        LinearLayout.LayoutParams actionRight = new LinearLayout.LayoutParams(0, dp(42), 1f);
-        actionLeft.rightMargin = dp(8);
-        motionActions.addView(motionButton, actionLeft);
-        motionActions.addView(calibrateButton, actionRight);
-        motionCard.addView(motionActions);
-        motionButton.setOnClickListener(view -> enableMotion());
+        motionCard.addView(calibrateButton, marginParams(-1, 42, 0, 0, 0));
         calibrateButton.setOnClickListener(view -> calibrateNeutral());
 
 
@@ -577,30 +546,15 @@ public class MainActivity extends Activity implements SensorEventListener {
         if (roomFooter != null && !roomCode.isEmpty()) roomFooter.setText("ROOM  " + roomCode);
     }
 
-    private void enableMotion() {
-        if (motionEnabled) {
-            sensorManager.unregisterListener(this);
-            motionEnabled = false;
-            sensorSeen = false;
-            motionSteer = 0f;
-            effectiveSteer = 0f;
-            motionThrottle = 0f;
-            effectiveThrottle = 0f;
-            motionButton.setText("ENABLE MOTION");
-            sensorState.setText("NOT ENABLED");
-            sensorState.setTextColor(ORANGE);
-            motionMessage.setText("Motion paused. Enable sensors to steer and control rail speed.");
-            calibrateButton.setEnabled(false);
-            updateEffectiveControls();
-            return;
-        }
-
+    private void startMotionSensors() {
         rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
         if (rotationSensor == null) rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
         gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         if (rotationSensor == null) {
+            motionEnabled = false;
             sensorState.setText("NO ROTATION SENSOR");
             sensorState.setTextColor(RED);
+            calibrateButton.setEnabled(false);
             motionMessage.setText("This Android device has no rotation sensor; tilt steering is unavailable.");
             return;
         }
@@ -611,20 +565,23 @@ public class MainActivity extends Activity implements SensorEventListener {
         if (registered) {
             sensorState.setText("SENSOR STARTING");
             sensorState.setTextColor(CYAN);
-            motionButton.setText("MOTION ENABLED");
             calibrateButton.setEnabled(true);
-            motionMessage.setText("Keep the phone upright. Neutral steering and speed are learned now.");
+            motionMessage.setText("Motion is on. Hold the phone neutral and tap CALIBRATE.");
             sensorSeen = false;
             lastRoll = Float.NaN;
             neutralRoll = Float.NaN;
             lastPitch = Float.NaN;
             neutralPitch = Float.NaN;
             motionSteer = 0f;
+            effectiveSteer = 0f;
             motionThrottle = 0f;
+            effectiveThrottle = 0f;
+            updateEffectiveControls();
         } else {
             sensorState.setText("SENSOR ERROR");
             sensorState.setTextColor(RED);
-            motionMessage.setText("Could not start the rotation sensor. Check sensor settings and retry.");
+            calibrateButton.setEnabled(false);
+            motionMessage.setText("Could not start the rotation sensor. Check sensor settings.");
         }
     }
 
@@ -646,19 +603,17 @@ public class MainActivity extends Activity implements SensorEventListener {
     private void updateEffectiveControls() {
         effectiveSteer = Math.max(-1f, Math.min(1f, motionSteer));
         effectiveThrottle = Math.max(-1f, Math.min(1f, motionThrottle));
-        if (dialView != null) dialView.setReading(effectiveSteer, currentDeltaDegrees());
-        updateRailSpeedDisplay();
+        updateTiltIndicator();
     }
 
-    private void updateRailSpeedDisplay() {
-        float multiplier = Math.max(.45f, Math.min(1.8f, 1f + effectiveThrottle * .8f));
-        if (railSpeedValue != null) railSpeedValue.setText(String.format(Locale.US, "%.1f×", multiplier));
-        if (speedMeter != null) speedMeter.setThrottle(effectiveThrottle);
+    private float railSpeedMultiplier() {
+        return Math.max(.45f, Math.min(1.8f, 1f + effectiveThrottle * .8f));
     }
 
-    private float currentDeltaDegrees() {
-        if (Float.isNaN(lastRoll) || Float.isNaN(neutralRoll)) return 0f;
-        return normalizeDegrees(lastRoll - neutralRoll);
+    private void updateTiltIndicator() {
+        if (dialView != null) {
+            dialView.setReading(effectiveSteer, effectiveThrottle, railSpeedMultiplier());
+        }
     }
 
     private static float normalizeDegrees(float value) {
@@ -694,8 +649,7 @@ public class MainActivity extends Activity implements SensorEventListener {
             sensorState.setTextColor(MINT);
             motionMessage.setText("Roll to steer · pitch forward/back to change rail speed.");
             angleValue.setText(String.format(Locale.US, "%d°", Math.round(rollDelta)));
-            if (dialView != null) dialView.setReading(effectiveSteer, rollDelta);
-            updateRailSpeedDisplay();
+            updateTiltIndicator();
         } else if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
             if (event.values.length > 1) gyroRollRateDegrees = (float) Math.toDegrees(event.values[1]);
         }
@@ -728,6 +682,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         if (motionEnabled && rotationSensor != null) {
             sensorManager.registerListener(this, rotationSensor, SensorManager.SENSOR_DELAY_GAME);
             if (gyroscope != null) sensorManager.registerListener(this, gyroscope, SensorManager.SENSOR_DELAY_GAME);
+        } else if (sensorManager != null && sensorState != null) {
+            startMotionSensors();
         }
     }
 
@@ -749,16 +705,18 @@ public class MainActivity extends Activity implements SensorEventListener {
     private class TiltDialView extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private float steer = 0f;
-        private float degrees = 0f;
+        private float throttle = 0f;
+        private float speed = 1f;
 
         TiltDialView(Context context) {
             super(context);
             setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         }
 
-        void setReading(float newSteer, float newDegrees) {
+        void setReading(float newSteer, float newThrottle, float newSpeed) {
             steer = Math.max(-1f, Math.min(1f, newSteer));
-            degrees = newDegrees;
+            throttle = Math.max(-1f, Math.min(1f, newThrottle));
+            speed = newSpeed;
             invalidate();
         }
 
@@ -779,6 +737,8 @@ public class MainActivity extends Activity implements SensorEventListener {
             paint.setColor(0x303F7A91);
             canvas.drawLine(cx - r * .82f, cy, cx + r * .82f, cy, paint);
             canvas.drawLine(cx, cy - r * .82f, cx, cy + r * .82f, paint);
+            paint.setColor(0x5555DCE3);
+            canvas.drawCircle(cx, cy, dp(2), paint);
 
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(0xFF617D91);
@@ -787,50 +747,23 @@ public class MainActivity extends Activity implements SensorEventListener {
             canvas.drawText("LEFT", cx - r * .72f, cy + r + dp(10), paint);
             canvas.drawText("RIGHT", cx + r * .30f, cy + r + dp(10), paint);
 
-            float markerX = cx + steer * r * .65f;
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(dp(9));
+            paint.setTypeface(Typeface.create(Typeface.MONOSPACE, Typeface.BOLD));
+            paint.setColor(throttle < -.025f ? ORANGE : CYAN);
+            canvas.drawText(String.format(Locale.US, "SPD %.1f×", speed), cx, cy - r * .72f, paint);
+            paint.setTextAlign(Paint.Align.LEFT);
+
+            float markerX = cx + steer * r * .56f;
+            float markerY = cy - throttle * r * .56f;
             paint.setStyle(Paint.Style.FILL);
             paint.setShadowLayer(dp(10), 0, 0, 0x9965E8EC);
-            paint.setColor(0xFF65E8EC);
-            canvas.drawCircle(markerX, cy, dp(9), paint);
+            paint.setColor(throttle < -.025f ? ORANGE : 0xFF65E8EC);
+            canvas.drawCircle(markerX, markerY, dp(9), paint);
             paint.clearShadowLayer();
             paint.setColor(0xFF0B1D28);
-            canvas.drawCircle(markerX, cy, dp(3), paint);
+            canvas.drawCircle(markerX, markerY, dp(3), paint);
 
-            paint.setColor(0xFF8498AB);
-            paint.setTextSize(dp(8));
-            canvas.drawText(String.format(Locale.US, "%d°", Math.round(degrees)), cx - dp(10), cy - r * .72f, paint);
-        }
-    }
-
-    private class SpeedMeterView extends View {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private float throttle = 0f;
-
-        SpeedMeterView(Context context) {
-            super(context);
-            setClickable(false);
-        }
-
-        void setThrottle(float value) {
-            throttle = Math.max(-1f, Math.min(1f, value));
-            invalidate();
-        }
-
-        @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            float left = dp(2);
-            float right = getWidth() - dp(2);
-            float center = (left + right) / 2f;
-            float top = (getHeight() - dp(7)) / 2f;
-            float bottom = top + dp(7);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xFF1A2938);
-            canvas.drawRoundRect(left, top, right, bottom, dp(4), dp(4), paint);
-            float end = center + throttle * (right - left) * .47f;
-            paint.setColor(throttle >= 0 ? CYAN : ORANGE);
-            canvas.drawRoundRect(Math.min(center, end), top, Math.max(center, end), bottom, dp(4), dp(4), paint);
-            paint.setColor(0xFFDAE9F0);
-            canvas.drawRoundRect(center - dp(1), top - dp(3), center + dp(1), bottom + dp(3), dp(1), dp(1), paint);
         }
     }
 }
